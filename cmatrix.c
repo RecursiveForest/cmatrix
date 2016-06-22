@@ -503,9 +503,8 @@ int main(int argc, char *argv[])
 			&& spaces[j] > 0) {
 			matrix[0][j].val = -1;
 			spaces[j]--;
-		    }
-			else if (matrix[0][j].val == -1
-				 && matrix[1][j].val == ' ') {
+		    } else if (matrix[0][j].val == -1
+			       && matrix[1][j].val == ' ') {
 			length[j] = (int) rand() % (LINES - 3) + 3;
 			matrix[0][j].val =
 			    (int) rand() % randnum + randmin;
