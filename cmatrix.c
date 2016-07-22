@@ -59,6 +59,7 @@
 typedef struct cmatrix {
     int val;
     int bold;
+    int speed;
 } cmatrix;
 
 /* Global variables, unfortunately */
@@ -66,7 +67,6 @@ int console = 0, xwindow = 0;		/* Are we in the console? X? */
 cmatrix **matrix = (cmatrix **) NULL;   /* The matrix has you */
 int *length = NULL;			/* Length of cols in each line */
 int *spaces = NULL;			/* spaces left to fill */
-int *updates = NULL;			/* What does this do again? :) */
 
 int va_system(char *str, ...)
 {
@@ -129,6 +129,7 @@ void usage(void)
     printf(" -b: Bold characters on\n");
     printf(" -B: All bold characters (overrides -b)\n");
     printf(" -f: Force the linux $TERM type to be on\n");
+    printf(" -i: Independent segment scroll speeds\n");
     printf(" -l: Linux mode (uses matrix console font)\n");
     printf(" -o: Use old-style scrolling\n");
     printf(" -h: Print usage and exit\n");
@@ -181,14 +182,12 @@ RETSIGTYPE var_init(void)
 	free(spaces);
     spaces = nmalloc(COLS* sizeof(int));
 
-    if (updates != NULL)
-	free(updates);
-    updates = nmalloc(COLS * sizeof(int));
-
     /* Make the matrix */
     for (i = 0; i <= LINES; i++)
-	for (j = 0; j <= COLS - 1; j += 2)
+	for (j = 0; j <= COLS - 1; j += 2) {
 	    matrix[i][j].val = -1;
+	    matrix[i][j].speed = -1;
+	}
 
     for (j = 0; j <= COLS - 1; j += 2) {
 	/* Set up spaces[] array of how many spaces to skip */
@@ -199,9 +198,6 @@ RETSIGTYPE var_init(void)
 
 	/* Sentinel value for creation of new objects */
 	matrix[1][j].val = ' ';
-
-	/* And set updates[] array for update speed. */
-	updates[j] = (int) rand() % 3 + 1;
     }
 
 }
@@ -248,20 +244,23 @@ int main(int argc, char *argv[])
     int i, j = 0, count = 0, screensaver = 0, asynch = 0, bold = -1,
 	force = 0, y, z, firstcoldone = 0, oldstyle = 0, random =
 	0, update = 4, highnum = 0, mcolor = COLOR_GREEN, randnum =
-	0, randmin = 0;
+	0, randmin = 0, indep = 0;
 
     char *oldtermname, *syscmd = NULL;
     int optchr, keypress;
 
     /* Many thanks to morph- (morph@jmss.com) for this getopt patch */
     opterr = 0;
-    while ((optchr = getopt(argc, argv, "abBfhlnosxVu:C:")) != EOF) {
+    while ((optchr = getopt(argc, argv, "abBfhilnosxVu:C:")) != EOF) {
 	switch (optchr) {
 	case 's':
 	    screensaver = 1;
 	    break;
 	case 'a':
 	    asynch = 1;
+	    break;
+	case 'i':
+	    indep = 1;
 	    break;
 	case 'b':
 	    if (bold != 2 && bold != 0)
@@ -424,6 +423,9 @@ int main(int argc, char *argv[])
 		case 'B':
 		    bold = 2;
 		    break;
+		case 'i':
+		    indep = 1 - indep;
+		    break;
 		case 'n':
 		    bold = 0;
 		    break;
@@ -463,8 +465,6 @@ int main(int argc, char *argv[])
 		}
 	}
 	for (j = 0; j <= COLS - 1; j += 2) {
-	    if (count > updates[j] || asynch == 0) {
-
 		/* I dont like old-style scrolling, yuck */
 		if (oldstyle) {
 		    for (i = LINES - 1; i >= 1; i--)
@@ -499,10 +499,12 @@ int main(int argc, char *argv[])
 			    (int) rand() % randnum + randmin;
 
 		} else {	/* New style scrolling (default) */
+		    /* generate gap */
 		    if (matrix[0][j].val == -1 && matrix[1][j].val == ' '
 			&& spaces[j] > 0) {
 			matrix[0][j].val = -1;
 			spaces[j]--;
+		    /* spawn a new segment */
 		    } else if (matrix[0][j].val == -1
 			       && matrix[1][j].val == ' ') {
 			length[j] = (int) rand() % (LINES - 3) + 3;
@@ -511,6 +513,12 @@ int main(int argc, char *argv[])
 
 			if ((int) rand() % 2 == 1)
 			    matrix[0][j].bold = 2;
+
+			/* reuse .speed iff asynch && !indep */
+			if (asynch == 0 && indep == 0)
+			    matrix[0][j].speed = 1;
+			else if (matrix[0][j].speed == -1 || indep == 1)
+			    matrix[0][j].speed = (int) rand() % 3 + 1;
 
 			spaces[j] = (int) rand() % LINES + 1;
 		    }
@@ -531,9 +539,22 @@ int main(int argc, char *argv[])
 			z = i;
 			y = 0;
 			while (i <= LINES && (matrix[i][j].val != ' ' &&
-				matrix[i][j].val != -1)) {
+			       matrix[i][j].val != -1)) {
+			    if (i < LINES && matrix[i][j].speed != -1 &&
+			        matrix[i+1][j].speed != -1 &&
+			        matrix[i][j].speed !=
+			        matrix[i+1][j].speed) {
+				i++;
+				y++;
+				break;
+			    }
 			    i++;
 			    y++;
+			}
+
+			if (count <= matrix[i-1][j].speed) {
+			    i++;
+			    continue;
 			}
 
 			if (i > LINES) {
@@ -544,7 +565,9 @@ int main(int argc, char *argv[])
 
 			matrix[i][j].val =
 			    (int) rand() % randnum + randmin;
+			matrix[i][j].speed = matrix[i-1][j].speed;
 
+			/* propagate white heads */
 			if (matrix[i - 1][j].bold == 2) {
 			    matrix[i - 1][j].bold = 1;
 			    matrix[i][j].bold = 2;
@@ -563,7 +586,6 @@ int main(int argc, char *argv[])
 			i++;
 		    }
 		}
-	    }
 	    /* Hack =P */
 	    if (!oldstyle) {
 		y = 1;
